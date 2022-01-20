@@ -30,9 +30,20 @@ def data_preparation():
                     'own_or_self', 'vet_question', 'vet_benefits', 'weeks_worked', 'year', 'income_50k']
 
     # Load the dataset in Pandas
-    train_df = pd.read_csv('data/census-income.data.gz', delimiter=',', header=None, index_col=None, names=column_names)
-    test_df = pd.read_csv('data/census-income.test.gz', delimiter=',', header=None, index_col=None, names=column_names)
-
+    train_df = pd.read_csv(
+        'data/census-income.data.gz',
+        delimiter=',',
+        header=None,
+        index_col=None,
+        names=column_names
+    )
+    test_df = pd.read_csv(
+        'data/census-income.test.gz',
+        delimiter=',',
+        header=None,
+        index_col=None,
+        names=column_names
+    )
     # 不同的目标可以理解为最终的label
     label_columns = ['income_50k', 'marital_stat']
 
@@ -47,6 +58,9 @@ def data_preparation():
     test_raw_labels = test_df[label_columns]
     transformed_train = pd.get_dummies(train_df.drop(label_columns, axis=1), columns=categorical_columns)
     transformed_test = pd.get_dummies(test_df.drop(label_columns, axis=1), columns=categorical_columns)
+
+    transformed_test['det_hh_fam_stat_ Grandchild <18 ever marr not in subfamily'] = 0
+
 
     train_income = to_categorical((train_raw_labels.income_50k == ' 50000+.').astype(int), num_classes=2)
     train_marital = to_categorical((train_raw_labels.marital_stat == ' Never married').astype(int), num_classes=2)

@@ -41,20 +41,24 @@ class CGC(Layer):
         assert input_shape is not None and len(input_shape) >= 2
         units = [input_shape[-1]] + self.units
         self.experts = []
-        self.experts_bais = []
+        self.experts_bias = []
 
         for n in range(self.num_experts):
-            self.experts.append([self.add_weight(name=f'experts_weight_{n}_{i}', shape=(units[i], units[i + 1]),
-                                                 initializer=tf.initializers.glorot_normal(seed=self.seed),
-                                                 regularizer=l2(self.l2_reg), trainable=True)
-                                 for i in range(len(units) - 1)])
+            self.experts.append(
+                [self.add_weight(name=f'experts_weight_{n}_{i}', shape=(units[i], units[i + 1]),
+                                 initializer=tf.initializers.glorot_normal(seed=self.seed),
+                                 regularizer=l2(self.l2_reg), trainable=True)
+                 for i in range(len(units) - 1)])
 
-            self.experts_bais.append(
-                self.add_weight(name=f'expert_bais_weight_{n}_{i}', shape=(units[i]),
-                                initializer=tf.initializers.Zeros(), trainable=True) for i in range(len(units) - 1))
+            self.experts_bias.append(
+                [self.add_weight(name=f'expert_bais_weight_{n}_{i}', shape=(self.units[i]),
+                                 initializer=tf.initializers.Zeros(), trainable=True)
+                 for i in range(len(self.units))])
 
-        self.gating = [tf.keras.layers.Dense(self.num_experts, name=f'gating_{i}', use_bias=False) for i in
-                       range(self.num_tasks)]
+        self.gating = [
+            tf.keras.layers.Dense(self.num_experts_task + self.num_experts_share, name=f'gating_{i}', use_bias=False)
+            for i in
+            range(self.num_tasks)]
 
         if self.output_share:
             self.gating_share = tf.keras.layers.Dense(self.num_experts, name=f'gating_share', use_bias=False)
@@ -67,25 +71,29 @@ class CGC(Layer):
         super(CGC, self).build(input_shape)
 
     def call(self, inputs, **kwargs):
-        # experts 不共享inputs效果会更好
+        # experts 不共享inputs效果会更好 所以加维度,复制,减维度,目的就是复制多份
         target_inputs = inputs
+        # print(target_inputs)
         if K.ndim(target_inputs) == 2:
-            x0 = tf.tile(tf.expand_dims(target_inputs, axis=1), [1, self.num_experts, 1])
+            x0 = tf.tile(tf.expand_dims(target_inputs, 1), [1, self.num_experts, 1])
             x1 = [tf.expand_dims(target_inputs, axis=1)] * (self.num_tasks + 1)
         else:
             raise ValueError(f'Unexpected inputs dims {K.ndim(target_inputs)}')
         x0 = tf.split(x0, num_or_size_splits=self.num_experts, axis=1)
+        # print(x0)
         for n in range(self.num_experts):
             x0[n] = tf.squeeze(x0[n], axis=1)
             for i in range(len(self.units)):
-                x0[n] = tf.matmul(x0[0], self.experts[n][i])
-                x0[n] = self.activation_layers[i](tf.add(x0[n], self.experts_bais[n][i]))
+                x0[n] = tf.matmul(x0[n], self.experts[n][i])
+                x0[n] = self.activation_layers[i](tf.add(x0[n], self.experts_bias[n][i]))
+
         ret = []
         for i in range(self.num_tasks):
-            gating_score = tf.nn.softmax(self.gating[i](x1[i]))
+            gating_score = tf.nn.softmax(self.gating[i](x1[i]))  # (bs, 1, num_experts_task + num_experts_share)
             output_of_experts = tf.stack(
-                x0[i * self.num_experts_task:(i + 1) * self.num_experts_task] + x0[-self.num_experts_share:])
-            ret.append(tf.matmul(gating_score, output_of_experts))
+                x0[i * self.num_experts_task:(i + 1) * self.num_experts_task] + x0[-self.num_experts_share:],
+                axis=1)  # (bs, num_experts_task + num_experts_share, unit)
+            ret.append(tf.matmul(gating_score, output_of_experts))  # (bs, 1, unit)
 
         if self.output_share:
             gating_score = tf.nn.softmax(self.gating_share(x1[-1]))
